@@ -374,12 +374,12 @@ script/build/hub: $(SOURCES)
 script/test:
 	@shared/scripts/build test
 
-script/test-all: bin/cucumber
-ifdef CI
-	@shared/scripts/test --coverage $(MIN_COVERAGE)
-else
-	@shared/scripts/test
-endif
+#script/test-all: bin/cucumber
+#ifdef CI
+#	@shared/scripts/test --coverage $(MIN_COVERAGE)
+#else
+#	@shared/scripts/test
+#endif
 
 bin/ronn bin/cucumber:
 	@shared/scripts/bootstrap
