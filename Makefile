@@ -54,18 +54,24 @@ DOCKER_MULTI_STAGE_IMAGE 	:= $(DOCKER_IMAGE_OWNER)/$(DOCKER_IMAGE_BASENAME)-mult
 REPO_VCS 					:= github.com
 REPO_OWNER 					:= sniperkit
 REPO_NAME 					:= hub
+REPO_BRANCH_DEV 			:= sniperkit
+REPO_IS_FORK 				:= true
+
 REPO_URI 					:= $(REPO_VCS)/$(REPO_OWNER)/$(REPO_NAME)
-REPO_BRANCH 				:= $(subst heads/,,$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null))
-REPO_FORK_BRANCH_EXPECTED 	:= sniperkit
+REPO_REMOTE_ORIGIN_URL 		:= $(shell git config --get remote.origin.url)
+REPO_BRANCH_CURRENT 		:= $(subst heads/,,$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null))
+REPO_BRANCH_EXPECTED 		?= $(REPO_BRANCH_DEV)
 
 # vcs - orign
 REPO_ORIG_VCS 				:= github.com
 REPO_ORIG_OWNER 			:= github
 REPO_ORIG_NAME 				:= hub
-REPO_ORIG_URI 				:= $(REPO_ORIG_VCS)/$(REPO_ORIG_OWNER)/$(REPO_ORIG_NAME)
 REPO_ORIG_BRANCH 			:= master
 
-ifeq ($(REPO_BRANCH), $(REPO_FORK_BRANCH_EXPECTED))
+REPO_ORIG_URI 				:= $(REPO_ORIG_VCS)/$(REPO_ORIG_OWNER)/$(REPO_ORIG_NAME)
+REPO_ORIG_REMOTE_URL 		:= git://$(REPO_ORIG_URI).git
+
+ifeq ($(REPO_BRANCH_CURRENT), $(REPO_BRANCH_EXPECTED))
   REPO_BRANCH_MISMATCH 		:= false
 else
   REPO_BRANCH_MISMATCH 		:= true
@@ -98,47 +104,11 @@ BUILD_LDFLAGS = \
 	-X '$(REPO_URI)/pkg/version.BuildCount=$(BUILD_COUNT)' \
 	-X '$(REPO_URI)/pkg/version.BuildUnix=$(BUILD_UNIX)'
 
-SOURCES = $(shell shared/script/build files)
-SOURCES_FMT = $(shell shared/script/build files | cut -d/ -f1-2 | sort -u)
+SOURCES = $(shell shared/scripts/build files)
+SOURCES_FMT = $(shell shared/scripts/build files | cut -d/ -f1-2 | sort -u)
 
 PROG_NAME := hub
 PROGRAMS_LIST := hub hubs
-
-################################################################################################
-## hub - help
-MIN_COVERAGE = 89.4
-
-HELP_CMD = \
-	shared/man/man1/hub-alias.1 \
-	shared/man/man1/hub-browse.1 \
-	shared/man/man1/hub-ci-status.1 \
-	shared/man/man1/hub-compare.1 \
-	shared/man/man1/hub-create.1 \
-	shared/man/man1/hub-delete.1 \
-	shared/man/man1/hub-fork.1 \
-	shared/man/man1/hub-pr.1 \
-	shared/man/man1/hub-pull-request.1 \
-	shared/man/man1/hub-release.1 \
-	shared/man/man1/hub-issue.1 \
-	shared/man/man1/hub-sync.1 \
-
-HELP_EXT = \
-	shared/man/man1/hub-am.1 \
-	shared/man/man1/hub-apply.1 \
-	shared/man/man1/hub-checkout.1 \
-	shared/man/man1/hub-cherry-pick.1 \
-	shared/man/man1/hub-clone.1 \
-	shared/man/man1/hub-fetch.1 \
-	shared/man/man1/hub-help.1 \
-	shared/man/man1/hub-init.1 \
-	shared/man/man1/hub-merge.1 \
-	shared/man/man1/hub-push.1 \
-	shared/man/man1/hub-remote.1 \
-	shared/man/man1/hub-submodule.1 \
-
-HELP_ALL = shared/man/man1/hub.1 $(HELP_CMD) $(HELP_EXT)
-
-TEXT_WIDTH = 87
 
 ################################################################################################
 ## makefile
@@ -156,16 +126,40 @@ all: deps test build install version dist ## Trigger targets for generating a ne
 info: clear info-runtime info-vcs info-docker info-footer ## Print all Makefile related variables
 
 .PHONY: commit
-commit:
+commit: ensure-branch-dev
+	@git add .
 	@git commit -am "commit changes for..."
+
+.PHONY: ensure-branch-dev
+ensure-branch-dev: info-vcs
+	@if [ $(REPO_BRANCH_CURRENT) == "master" ];then \
+		git branch $(REPO_BRANCH_EXPECTED) 2>/dev/null; true; \
+		git checkout $(REPO_BRANCH_EXPECTED) 2>/dev/null; true; \
+	fi
 
 .PHONY: update-fork-master
 update-fork-master: commit
-	git remote add upstream git://$(REPO_ORIG_URI).git 2>/dev/null; true
+	@echo "current branch: $(subst heads/,,$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null))"
+	@if [ $(subst heads/,,$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null)) != $(REPO_BRANCH_EXPECTED) ]; then \
+		git checkout $(REPO_BRANCH_EXPECTED); \
+		echo "chekout branch: $(subst heads/,,$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null))" ; \
+	fi
+	git remote add upstream $(REPO_ORIG_REMOTE_URL) 2>/dev/null; true
+	git fetch upstream 2>/dev/null; true
+	git pull upstream $(REPO_ORIG_BRANCH)
+	# git merge -Xours origin/$(REPO_ORIG_BRANCH)
+	git checkout $(REPO_BRANCH_CURRENT)
+
+.PHONY: update-local-master
+update-local-master: commit
+	git remote add upstream $(REPO_ORIG_REMOTE_URL) 2>/dev/null; true
 	git fetch upstream 2>/dev/null; true
 	git checkout $(REPO_ORIG_BRANCH)
 	git pull upstream $(REPO_ORIG_BRANCH)
-	git checkout -b $(REPO_BRANCH)
+	git merge -Xours origin/$(REPO_ORIG_BRANCH)
+	git checkout $(REPO_BRANCH_EXPECTED)
+
+# git reset --hard HEAD
 
 clear: ## Clear terminal screen 
 	@clear
@@ -177,6 +171,7 @@ info-header:
 info-footer:
 	@echo "$(INFO_FOOTER)"
 
+.PHONY: info-runtime
 info-runtime:  ## Print local runtime env variables
 	@echo "$(INFO_HEADER)"
 	@echo "Runtime:"
@@ -186,11 +181,27 @@ info-runtime:  ## Print local runtime env variables
 	@echo " - RUNTIME_OS_SLUG: $(RUNTIME_OS_SLUG)"
 	@echo " - RUNTIME_OS_INFO: $(RUNTIME_OS_INFO)"
 
+.PHONY: info-vcs
 info-vcs:  ## Print source-control related variables
 	@echo "$(INFO_HEADER)"
 	@echo "Source-Control:"
 	@echo " - REPO_URI: $(REPO_URI)"
-	@echo " - REPO_BRANCH: $(REPO_BRANCH)"
+	@echo " - REPO_REMOTE_ORIGIN_URL: $(REPO_REMOTE_ORIGIN_URL)"
+	@echo " - REPO_BRANCH_CURRENT: $(REPO_BRANCH_CURRENT)"
+	@echo " - REPO_BRANCH_EXPECTED: $(REPO_BRANCH_EXPECTED)"
+	@if [ $(REPO_BRANCH_MISMATCH) == "true" ]; then \
+		echo " - !!! Warning !!! REPO_BRANCH_MISMATCH $(REPO_BRANCH_MISMATCH)"; \
+	 	echo " - REPO_BRANCH_CURRENT=$(REPO_BRANCH_CURRENT) not equal to REPO_BRANCH_EXPECTED=$(REPO_BRANCH_EXPECTED)"; \
+		echo ""; \
+	fi
+	@if [ $(REPO_IS_FORK) == "true" ]; then \
+		echo " - REPO_ORIG_VCS: $(REPO_ORIG_VCS)" ; \
+		echo " - REPO_ORIG_OWNER: $(REPO_ORIG_OWNER)" ; \
+		echo " - REPO_ORIG_NAME: $(REPO_ORIG_NAME)" ; \
+		echo " - REPO_ORIG_BRANCH: $(REPO_ORIG_BRANCH)" ; \
+		echo " - REPO_ORIG_URI: $(REPO_ORIG_URI)" ; \
+		echo " - REPO_ORIG_REMOTE_URL: $(REPO_ORIG_REMOTE_URL)" ; \
+	fi
 	@echo " - COMMIT_ID: $(COMMIT_ID)"
 	@echo " - COMMIT_UNIX: $(COMMIT_UNIX)"
 	@echo " - COMMIT_HASH: $(COMMIT_HASH)"
@@ -198,11 +209,8 @@ info-vcs:  ## Print source-control related variables
 	@echo " - BUILD_UNIX: $(BUILD_UNIX)"
 	@echo " - BUILD_VERSION: $(BUILD_VERSION)"
 	@echo " - BUILD_TIME: $(BUILD_TIME)"
-	@echo " - REPO_BRANCH_MISMATCH: $(REPO_BRANCH_MISMATCH)"; \
-	 if [ $(REPO_BRANCH_MISMATCH) == "true" ]; then \
-	 	echo " - \$(REPO_BRANCH)=$(REPO_BRANCH) not equal to \$(REPO_BRANCH_FORK)=$(REPO_BRANCH_FORK)"; \
-	 fi
 
+.PHONY: info-docker
 info-docker:
 	@echo "$(INFO_HEADER)"
 	@echo "Docker:"
@@ -285,24 +293,35 @@ deps-create: ## Create program's dependencies list
 deps-ensure: ## Ensure locally all external dependencies required (package manager: glide)
 	@glide install --strip-vendor
 
-deps-dev: ## Install required build helpers in GOBIN 
-	@go get -v -u github.com/sniperkit/crane/cmd/crane
-	@go get -v -u github.com/sniperkit/gox/cmd/gox
+DEPS_DEV := github.com/sniperkit/crane/cmd/crane \
+			github.com/sniperkit/gox/cmd/gox
 
+.PHONY: deps-dev
+deps-dev: ## Install required build helpers in GOBIN 
+	@$(foreach cmd, $(DEPS_DEV), $(call go_install_cmd,$(cmd)))
+
+DEPS_TEST := 	github.com/go-playground/overalls \
+			 	github.com/mattn/goveralls \
+			 	golang.org/x/tools/cmd/cover \
+			 	github.com/alexkohler/prealloc \
+			 	github.com/FiloSottile/vendorcheck \
+			 	github.com/golang/dep/cmd/dep \
+			 	github.com/golang/lint/golint \
+			 	github.com/kisielk/errcheck \
+			 	github.com/mdempsky/unconvert \
+			 	github.com/opennota/check/... \
+			 	honnef.co/go/tools/cmd/... \
+			 	mvdan.cc/interfacer \
+				github.com/dominikh/go-tools/...
+
+.PHONY: deps-test
 deps-test:  ## Install required program testing an ci helpers in GOBIN
-	@go get -v -u github.com/go-playground/overalls
-	@go get -v -u github.com/mattn/goveralls
-	@go get -v -u golang.org/x/tools/cmd/cover
-	@go get -v -u github.com/alexkohler/prealloc
-	@go get -v -u github.com/FiloSottile/vendorcheck
-	@go get -v -u github.com/golang/dep/cmd/dep
-	@go get -v -u github.com/golang/lint/golint
-	@go get -v -u github.com/kisielk/errcheck
-	@go get -v -u github.com/mdempsky/unconvert
-	@go get -v -u github.com/opennota/check/...
-	@go get -v -u honnef.co/go/tools/...
-	@go get -v -u mvdan.cc/interfacer
-	@go get -v -u github.com/dominikh/go-tools/...
+	@$(foreach cmd, $(DEPS_TEST), $(call go_install_cmd,$(cmd)))
+
+define go_install_cmd
+    echo " [INSTALL] Package: $(1)";
+	@errors=$$(go get -u $(1)); if [ "$${errors}" != "" ]; then echo \"$${errors}\"; exit 1; fi;
+endef
 
 lint: ## Lint program's source code
 	@errors=$$(gofmt -l .); if [ "$${errors}" != "" ]; then echo "$${errors}"; exit 1; fi
@@ -365,6 +384,42 @@ help: ## Display the list of available targets.
 #		echo 'For more informations show `webui/readme.md`' > $$PWD/static/DONT-EDIT-FILES-IN-THIS-DIRECTORY.md; \
 #	fi
 
+################################################################################################
+## hub - help
+MIN_COVERAGE = 89.4
+
+HELP_CMD = \
+	shared/man/man1/hub-alias.1 \
+	shared/man/man1/hub-browse.1 \
+	shared/man/man1/hub-ci-status.1 \
+	shared/man/man1/hub-compare.1 \
+	shared/man/man1/hub-create.1 \
+	shared/man/man1/hub-delete.1 \
+	shared/man/man1/hub-fork.1 \
+	shared/man/man1/hub-pr.1 \
+	shared/man/man1/hub-pull-request.1 \
+	shared/man/man1/hub-release.1 \
+	shared/man/man1/hub-issue.1 \
+	shared/man/man1/hub-sync.1 \
+
+HELP_EXT = \
+	shared/man/man1/hub-am.1 \
+	shared/man/man1/hub-apply.1 \
+	shared/man/man1/hub-checkout.1 \
+	shared/man/man1/hub-cherry-pick.1 \
+	shared/man/man1/hub-clone.1 \
+	shared/man/man1/hub-fetch.1 \
+	shared/man/man1/hub-help.1 \
+	shared/man/man1/hub-init.1 \
+	shared/man/man1/hub-merge.1 \
+	shared/man/man1/hub-push.1 \
+	shared/man/man1/hub-remote.1 \
+	shared/man/man1/hub-submodule.1 \
+
+HELP_ALL = shared/man/man1/hub.1 $(HELP_CMD) $(HELP_EXT)
+
+TEXT_WIDTH = 87
+
 ########################################################################################################
 ### Legacy
 
@@ -374,12 +429,12 @@ script/build/hub: $(SOURCES)
 script/test:
 	@shared/scripts/build test
 
-#script/test-all: bin/cucumber
-#ifdef CI
-#	@shared/scripts/test --coverage $(MIN_COVERAGE)
-#else
-#	@shared/scripts/test
-#endif
+script/test-all: bin/cucumber
+ifdef CI
+	@shared/scripts/test --coverage $(MIN_COVERAGE)
+else
+	@shared/scripts/test
+endif
 
 bin/ronn bin/cucumber:
 	@shared/scripts/bootstrap
