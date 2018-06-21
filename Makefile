@@ -51,22 +51,32 @@ DOCKER_MULTI_STAGE_IMAGE 	:= $(DOCKER_IMAGE_OWNER)/$(DOCKER_IMAGE_BASENAME)-mult
 ## version
 
 # vcs
-REPO_VCS 		:= github.com
-REPO_OWNER 		:= sniperkit
-REPO_NAME 		:= hub
-REPO_URI 		:= $(REPO_VCS)/$(REPO_OWNER)/$(REPO_NAME)
-REPO_BRANCH 	:= $(subst heads/,,$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null))
+REPO_VCS 					:= github.com
+REPO_OWNER 					:= sniperkit
+REPO_NAME 					:= hub
+REPO_URI 					:= $(REPO_VCS)/$(REPO_OWNER)/$(REPO_NAME)
+REPO_BRANCH 				:= $(subst heads/,,$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null))
+REPO_BRANCH_ORIGIN 			:= master
+REPO_BRANCH_FORK 			:= sniperkit
+
+ifeq ($(REPO_BRANCH), $(REPO_BRANCH_FORK))
+  REPO_BRANCH_WARNING 		:= false
+else
+  REPO_BRANCH_WARNING 		:= true
+endif
+
+# check if $(REPO_BRANCH_FORK) == $(REPO_BRANCH)
 
 #### vcs - commit 
-COMMIT_ID   	?= $(shell git describe --tags --always --dirty=-dev)
-COMMIT_UNIX 	?= $(shell git show -s --format=%ct HEAD)
-COMMIT_HASH 	?= $(shell git rev-parse HEAD)
+COMMIT_ID   				?= $(shell git describe --tags --always --dirty=-dev)
+COMMIT_UNIX 				?= $(shell git show -s --format=%ct HEAD)
+COMMIT_HASH 				?= $(shell git rev-parse HEAD)
 
 #### semantic version 
-BUILD_COUNT 	?= $(shell git rev-list --count HEAD)
-BUILD_UNIX  	?= $(shell date +%s)
-BUILD_VERSION 	:= $(shell cat $(CURDIR)/VERSION)
-BUILD_TIME 		:= $(shell date)
+BUILD_COUNT 				?= $(shell git rev-list --count HEAD)
+BUILD_UNIX  				?= $(shell date +%s)
+BUILD_VERSION 				:= $(shell cat $(CURDIR)/VERSION)
+BUILD_TIME 					:= $(shell date)
 
 ################################################################################################
 ## golang
@@ -134,11 +144,18 @@ INFO_FOOTER := "$(INFO_BREAKLINE)------------------------------$(INFO_BREAKLINE)
 
 default: help
 
-all: deps-ensure test build install version
+# all: deps-ensure test build install version
 
 all: deps test build install version dist ## Trigger targets for generating a new release: deps, test, build, install, version and dist targets
 
 info: clear info-runtime info-vcs info-docker info-footer ## Print all Makefile related variables
+
+update-fork-master:
+	@git remote add upstream git://github.com/github/hub.git
+	@git fetch upstream
+	@git checkout -b master
+	@git pull upstream master
+	@git checkout -b $(REPO_BRANCH)
 
 clear: ## Clear terminal screen 
 	@clear
@@ -171,6 +188,10 @@ info-vcs:  ## Print source-control related variables
 	@echo " - BUILD_UNIX: $(BUILD_UNIX)"
 	@echo " - BUILD_VERSION: $(BUILD_VERSION)"
 	@echo " - BUILD_TIME: $(BUILD_TIME)"
+	@echo " - REPO_BRANCH_WARNING: $(REPO_BRANCH_WARNING)"; \
+	 if [ $(REPO_BRANCH_WARNING) == "true" ]; then \
+	 	echo " - \$(REPO_BRANCH)=$(REPO_BRANCH) not equal to \$(REPO_BRANCH_FORK)=$(REPO_BRANCH_FORK)"; \
+	 fi
 
 info-docker:
 	@echo "$(INFO_HEADER)"
