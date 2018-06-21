@@ -147,7 +147,7 @@ update-fork-master: commit
 	git remote add upstream $(REPO_ORIG_REMOTE_URL) 2>/dev/null; true
 	git fetch upstream 2>/dev/null; true
 	git pull upstream $(REPO_ORIG_BRANCH)
-	# git merge -Xours origin/$(REPO_ORIG_BRANCH)
+	git merge -Xours origin/$(REPO_ORIG_BRANCH)
 	git checkout $(REPO_BRANCH_CURRENT)
 
 .PHONY: update-local-master

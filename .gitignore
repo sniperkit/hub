@@ -69,11 +69,9 @@ profile.out
 coverage.txt
 
 # external packages folder
-vendor/
 webserver/
 
-
-cmd/ghs/ghs*
+cmd/hub/hub*
 
 .deploy
 deploy.sh
