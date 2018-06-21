@@ -1,0 +1,16 @@
+FROM alpine:3.7
+
+# container deps
+RUN apk update \
+	&& apk add --no-cache --no-progress ca-certificates \
+	&& rm -rf /var/cache/apk/* \
+	&& mkdir -p /gh
+
+# container binary
+ADD ./hub-linux /gh/hub
+
+# container configuration
+WORKDIR /gh
+EXPOSE 8000
+ENTRYPOINT /gh/hub
+# CMD [""]

@@ -8,9 +8,9 @@ go:
   - 1.10.x
   - 1.9.x
   - 1.8.x
-script: make test-all
-install: script/bootstrap
-after_success: script/publish-release
+script: make script/test-all
+install: shared/script/bootstrap
+after_success: shared/script/publish-release
 env:
   global:
     - AMAZON_S3_BUCKET=ci-cache
