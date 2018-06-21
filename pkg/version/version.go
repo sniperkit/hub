@@ -6,6 +6,8 @@ import (
 	"github.com/sniperkit/hub/plugin/vcs/local/git"
 )
 
+const ProgramName string = "xhub"
+
 var (
 	Version      string = "2.4.0"
 	CommitHash   string = ""

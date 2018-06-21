@@ -9,7 +9,13 @@ import (
 
 	"github.com/sniperkit/hub/plugin/vcs/provider/github"
 	"github.com/sniperkit/hub/plugin/vcs/provider/github/cmd"
+	// "github.com/sniperkit/hub/plugin/vcs/provider/github/index"
+	// starred "github.com/hoop33/limo/plugin/cli"
 )
+
+// func main() {
+// 	starred.Execute()
+// }
 
 func main() {
 	defer github.CaptureCrash()
