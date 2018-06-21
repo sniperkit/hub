@@ -8,6 +8,12 @@
   version = "v0.3.0"
 
 [[projects]]
+  name = "github.com/Masterminds/vcs"
+  packages = ["."]
+  revision = "6f1c6d150500e452704e9863f68c2559f58616bf"
+  version = "v1.12.0"
+
+[[projects]]
   branch = "master"
   name = "github.com/atotto/clipboard"
   packages = ["."]
@@ -85,6 +91,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "8da7746ef8bc5712c5e117753f75f96e6eec12fa8967b601cdd006f1b66cc765"
+  inputs-digest = "2bc0906058b9f70673f85f50ae1e2bbe720d1ee7e39262c2aaf132c3be397356"
   solver-name = "gps-cdcl"
   solver-version = 1
