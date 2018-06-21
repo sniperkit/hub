@@ -128,7 +128,7 @@ info: clear info-runtime info-vcs info-docker info-footer ## Print all Makefile 
 .PHONY: commit
 commit: ensure-branch-dev
 	@git add .
-	@git commit -am "commit changes for..."
+	@git commit -am "commit changes for..." 2>/dev/null; true
 
 .PHONY: ensure-branch-dev
 ensure-branch-dev: info-vcs
