@@ -5,21 +5,24 @@ package main
 import (
 	"os"
 
-	// ocre
-	"github.com/sniperkit/hub/pkg/commands"
+	// core
 	"github.com/sniperkit/hub/pkg/ui"
 
 	// plugins
-	"github.com/sniperkit/hub/plugin/vcs/provider/bitbucket"
-	. "github.com/sniperkit/hub/plugin/vcs/provider/github"
-	. "github.com/sniperkit/hub/plugin/vcs/provider/gitlab"
-	// "github.com/sniperkit/hub/plugin/vcs/provider/all"
+	"github.com/sniperkit/hub/plugin/vcs/provider/github"
+	"github.com/sniperkit/hub/plugin/vcs/provider/github/cmd"
+
+	_ "github.com/sniperkit/hub/plugin/vcs/provider/bitbucket"
+	_ "github.com/sniperkit/hub/plugin/vcs/provider/bitbucket/cmd"
+
+	_ "github.com/sniperkit/hub/plugin/vcs/provider/gitlab"
+	_ "github.com/sniperkit/hub/plugin/vcs/provider/gitlab/cmd"
 )
 
 func main() {
 	defer github.CaptureCrash()
 
-	err := commands.CmdRunner.Execute()
+	err := cmd.CmdRunner.Execute()
 	if !err.Ran {
 		ui.Errorln(err.Error())
 	}

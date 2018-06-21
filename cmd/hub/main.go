@@ -5,16 +5,16 @@ package main
 import (
 	"os"
 
-	"github.com/sniperkit/hub/pkg/commands"
 	"github.com/sniperkit/hub/pkg/ui"
 
 	"github.com/sniperkit/hub/plugin/vcs/provider/github"
+	"github.com/sniperkit/hub/plugin/vcs/provider/github/cmd"
 )
 
 func main() {
 	defer github.CaptureCrash()
 
-	err := commands.CmdRunner.Execute()
+	err := cmd.CmdRunner.Execute()
 	if !err.Ran {
 		ui.Errorln(err.Error())
 	}

@@ -20,6 +20,7 @@ RUNTIME_OS_NAME 			?= $(shell uname -s)
 PROG_NAME 					:= hub
 PROG_NAME_SUFFIX 			:= 
 PROG_SRCS 					:= $(shell git ls-files '*.go' | grep -v '^vendor/')
+PROG_BINS 					:= $(shell ls -1 $(CURDIR)/cmd)
 
 ## local build
 BIN_PREFIX_DIR 				:= ./bin
@@ -95,19 +96,23 @@ BUILD_TIME 					:= $(shell date)
 ################################################################################################
 ## golang
 
-GO15VENDOREXPERIMENT=1
-BUILD_LDFLAGS = \
-	-X '$(REPO_URI)/pkg/version.Version=$(VERSION)' \
-	-X '$(REPO_URI)/pkg/version.CranchName=$(REPO_BRANCH)' \
-	-X '$(REPO_URI)/pkg/version.CommitHash=$(COMMIT_HASH)' \
-	-X '$(REPO_URI)/pkg/version.CommitID=$(COMMIT_ID)' \
-	-X '$(REPO_URI)/pkg/version.CommitUnix=$(COMMIT_UNIX)' \
-	-X '$(REPO_URI)/pkg/version.BuildVersion=$(BUILD_VERSION)' \
-	-X '$(REPO_URI)/pkg/version.BuildCount=$(BUILD_COUNT)' \
-	-X '$(REPO_URI)/pkg/version.BuildUnix=$(BUILD_UNIX)'
+GO15VENDOREXPERIMENT	= 1
+BUILD_LDFLAGS 			= 	\
+							-X '$(REPO_URI)/pkg/version.Version=$(VERSION)' \
+							-X '$(REPO_URI)/pkg/version.CranchName=$(REPO_BRANCH)' \
+							-X '$(REPO_URI)/pkg/version.CommitHash=$(COMMIT_HASH)' \
+							-X '$(REPO_URI)/pkg/version.CommitID=$(COMMIT_ID)' \
+							-X '$(REPO_URI)/pkg/version.CommitUnix=$(COMMIT_UNIX)' \
+							-X '$(REPO_URI)/pkg/version.BuildVersion=$(BUILD_VERSION)' \
+							-X '$(REPO_URI)/pkg/version.BuildCount=$(BUILD_COUNT)' \
+							-X '$(REPO_URI)/pkg/version.BuildUnix=$(BUILD_UNIX)'
 
-SOURCES = $(shell shared/scripts/build files)
-SOURCES_FMT = $(shell shared/scripts/build files | cut -d/ -f1-2 | sort -u)
+SOURCES 				= $(shell shared/scripts/build files)
+SOURCES_FMT 			= $(shell shared/scripts/build files | cut -d/ -f1-2 | sort -u)
+
+## gox - cross-build
+GOX_OSARCH_LIST 		:= darwin/386 darwin/amd64 linux/386 linux/amd64 linux/arm freebsd/386 freebsd/amd64 freebsd/arm netbsd/386 netbsd/amd64 netbsd/arm openbsd/386 openbsd/amd64 openbsd/arm windows/386 windows/amd64
+GOX_CMD_LIST 			:= $(shell ls -1 $(CURDIR)/cmd)
 
 ################################################################################################
 ## makefile
@@ -209,61 +214,36 @@ info-vcs:  ## Print source-control related variables
 	@echo " - BUILD_VERSION: $(BUILD_VERSION)"
 	@echo " - BUILD_TIME: $(BUILD_TIME)"
 
-.PHONY: info-docker
-info-docker:
-	@echo "$(INFO_HEADER)"
-	@echo "Docker:"
-	@echo " - DOCKER_PREFIX_DIR: $(DOCKER_PREFIX_DIR)"
-	@echo " - DOCKER_BIN_FILE_PATH: $(DOCKER_BIN_FILE_PATH)"
-	@echo " - DOCKER_IMAGE_OWNER: $(DOCKER_IMAGE_OWNER)"
-	@echo " - DOCKER_IMAGE_TAG: $(DOCKER_IMAGE_TAG)"
-	@echo " - DOCKER_IMAGE: $(DOCKER_IMAGE)"
-	@echo " - DOCKER_MULTI_STAGE_IMAGE: $(DOCKER_MULTI_STAGE_IMAGE)"
+.PHONY: ls-cmd
+ls-cmd:
+	@echo "list of binaries available: \n"
+	@echo "$(PROG_BINS)"
 
-docker: docker-build  # docker-tag docker-commit docker-push ## Generate, tag and push a new docker image for this program.
-
-docker-quick: docker-build docker-run ## Build and run quickly a docker container for this program
-
-#docker-multistage: ## Build docker multi-stage container
-#	@cd $(DOCKER_PREFIX_DIR) 
-#	@docker build --force-rm -t $(DOCKER_MULTI_STAGE_IMAGE) --no-cache -f $(CURDIR)/docker/dockerfile-multi-stage-alpine3.7 .
-
-docker-build: ## Build docker container
-	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$(BUILD_LDFLAGS)" -o $(DOCKER_BIN_FILE_PATH)-linux -v *.go
-	@cd $(DOCKER_PREFIX_DIR) && docker build --force-rm -t $(DOCKER_IMAGE) --no-cache -f dockerfile-alpine3.7 .
-
-docker-run: ## Run docker container locally
-	@docker run -ti --rm $(DOCKER_IMAGE)
-
-docker-info: ## Get docker client info and env variables
-	@echo "'docker-info' is not implemented yet..."
-
-docker-summary: ## Get docker image(s)/container(s) summary 
-	@echo "'docker-summary' is not implemented yet..."
-
-docker-commit: ## Commit latest docker image for this program
-	@echo "'docker-commit' is not implemented yet..."
-
-docker-tag: ## Tag latest docker image for this program
-	@echo "'docker-push' is not implemented yet..."
-
-docker-push: ## Push docker image to image registry
-	@echo "'docker-push' is not implemented yet..."
-
+.PHONY: build
 build: ## Build binary for local operating system 
-	@go build -ldflags "$(BUILD_LDFLAGS)" -o $(BIN_FILE_PATH) ./cmd/$(PROG_NAME)/*.go
+	@$(foreach cmd, $(shell ls -1c ./cmd), $(call go_build_cmd,$(cmd)))
 
+define go_build_cmd
+    echo "## Building binary: $$(basename $1)" ;
+    @go build -v -ldflags "$(BUILD_LDFLAGS)" -o ./bin/$$(basename $1) ./cmd/$(1)/*.go ;
+    @./bin/$$(basename $1) version ;
+    echo "" ;
+endef
+
+.PHONY: install
 install: ## Install binary in your GOBIN path
-	@go install -ldflags "$(BUILD_LDFLAGS)" $(REPO_URI)/cmd/$(PROG_NAME)
-	@$(BIN_BASE_NAME) --version
+	@go install -ldflags "$(BUILD_LDFLAGS)" $(REPO_URI)/cmd/...
 
-xbuild: ## Build binaries for linux, darwin in amd64 arch.
-	@gox build -ldflags "$(BUILD_LDFLAGS)" -os="darwin linux" -arch="amd64" -output="$(DIST_DIR)/{{.Dir}}_{{.OS}}_{{.Arch}}" cmd/*.go
+.PHONY: dist
+dist: ## Build all dist binaries for linux, darwin in amd64 arch.
+	@gox -ldflags="$(BUILD_LDFLAGS)" -osarch="$(GOX_OSARCH_LIST)" -output="$(DIST_PREFIX_DIR)/{{.Dir}}_{{.OS}}_{{.Arch}}" $(REPO_URI)/cmd/...
 
+.PHONY: version
 version-current: ## Check current version of command build
 	@which $(BIN_BASE_NAME)
 	@$(BIN_BASE_NAME) --version
 
+.PHONY: clean
 clean: ## Clean previous build outputs 
 	@go clean
 	@git clean -fdx bin shared/man
@@ -322,47 +302,61 @@ define go_install_cmd
 	@errors=$$(go get -u $(1)); if [ "$${errors}" != "" ]; then echo \"$${errors}\"; exit 1; fi;
 endef
 
+.PHONY: lint
 lint: ## Lint program's source code
 	@errors=$$(gofmt -l .); if [ "$${errors}" != "" ]; then echo "$${errors}"; exit 1; fi
 	@errors=$$(glide novendor | xargs -n 1 golint -min_confidence=0.3); if [ "$${errors}" != "" ]; then echo "$${errors}"; exit 1; fi
 
+.PHONY: vet
 vet: ## Vet program's source code
 	@go vet $$(glide novendor)
 
+.PHONY: errcheck
 errcheck: ## Check for errors
 	@errcheck $(PACKAGES)
 
+.PHONY: interfacer
 interfacer: ## Suggest interface types
 	@interfacer $(PACKAGES)
 
+.PHONY: aligncheck
 aligncheck: ## Find inefficiently packed structs
 	@aligncheck $(PACKAGES)
 
+.PHONY: structcheck
 structcheck: ## Find unused struct fields
 	@structcheck $(PACKAGES)
 
+.PHONY: varcheck
 varcheck: ## Find unused global variables and constants
 	@varcheck $(PACKAGES)
 
+.PHONY: unconvert
 unconvert: ## Remove unnecessary type conversions from Go source
 	@unconvert -v $(PACKAGES)
 
+.PHONY: gosimple
 gosimple: ## Suggest code simplifications
 	@gosimple $(PACKAGES)
 
+.PHONY: staticcheck
 staticcheck: ## Execute a ton of static analysis checks
 	@staticcheck $(PACKAGES)
 
+.PHONY: unused
 unused: ## Find for unused constants, variables, functions and types. 
 	@unused $(PACKAGES)
 
+.PHONY: vendorcheck
 vendorcheck: ## Check that all Go dependencies are properly vendored
 	@vendorcheck $(PACKAGES)
 	@vendorcheck -u $(PACKAGES)
 
+.PHONY: prealloc
 prealloc: ## Find slice declarations that could potentially be preallocated.
 	@prealloc $(PACKAGES)
 
+.PHONY: test
 test: ## Execute cover tests on program's sources
 	@go test -cover $(PACKAGES)
 
@@ -372,6 +366,51 @@ coverage: ## Execute all coverage tests
 		go test -coverprofile=coverage.out -covermode=count $(pkg);\
 		tail -n +2 coverage.out >> coverage-all.out;)
 	@go tool cover -html=coverage-all.out
+
+.PHONY: info-docker
+info-docker:
+	@echo "$(INFO_HEADER)"
+	@echo "Docker:"
+	@echo " - DOCKER_PREFIX_DIR: $(DOCKER_PREFIX_DIR)"
+	@echo " - DOCKER_BIN_FILE_PATH: $(DOCKER_BIN_FILE_PATH)"
+	@echo " - DOCKER_IMAGE_OWNER: $(DOCKER_IMAGE_OWNER)"
+	@echo " - DOCKER_IMAGE_TAG: $(DOCKER_IMAGE_TAG)"
+	@echo " - DOCKER_IMAGE: $(DOCKER_IMAGE)"
+	@echo " - DOCKER_MULTI_STAGE_IMAGE: $(DOCKER_MULTI_STAGE_IMAGE)"
+
+docker: docker-build  # docker-tag docker-commit docker-push ## Generate, tag and push a new docker image for this program.
+
+docker-quick: docker-build docker-run ## Build and run quickly a docker container for this program
+
+#docker-multistage: ## Build docker multi-stage container
+#	@cd $(DOCKER_PREFIX_DIR) 
+#	@docker build --force-rm -t $(DOCKER_MULTI_STAGE_IMAGE) --no-cache -f $(CURDIR)/docker/dockerfile-multi-stage-alpine3.7 .
+
+.PHONY: docker-build
+docker-build: ## Build docker container
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$(BUILD_LDFLAGS)" -o $(DOCKER_BIN_FILE_PATH)-linux -v *.go
+	@cd $(DOCKER_PREFIX_DIR) && docker build --force-rm -t $(DOCKER_IMAGE) --no-cache -f dockerfile-alpine3.7 .
+
+.PHONY: docker-run
+docker-run: ## Run docker container locally
+	@docker run -ti --rm $(DOCKER_IMAGE)
+
+.PHONY: docker-info
+docker-info: ## Get docker client info and env variables
+	@echo "'docker-info' is not implemented yet..."
+
+docker-summary: ## Get docker image(s)/container(s) summary 
+	@echo "'docker-summary' is not implemented yet..."
+
+docker-commit: ## Commit latest docker image for this program
+	@echo "'docker-commit' is not implemented yet..."
+
+docker-tag: ## Tag latest docker image for this program
+	@echo "'docker-push' is not implemented yet..."
+
+docker-push: ## Push docker image to image registry
+	@echo "'docker-push' is not implemented yet..."
+
 
 help: ## Display the list of available targets.
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {sub("\\\\n",sprintf("\n%22c"," "), $$2);printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
