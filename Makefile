@@ -56,13 +56,19 @@ REPO_OWNER 					:= sniperkit
 REPO_NAME 					:= hub
 REPO_URI 					:= $(REPO_VCS)/$(REPO_OWNER)/$(REPO_NAME)
 REPO_BRANCH 				:= $(subst heads/,,$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null))
-REPO_BRANCH_ORIGIN 			:= master
-REPO_BRANCH_FORK 			:= sniperkit
+REPO_FORK_BRANCH_EXPECTED 	:= sniperkit
 
-ifeq ($(REPO_BRANCH), $(REPO_BRANCH_FORK))
-  REPO_BRANCH_WARNING 		:= false
+# vcs - orign
+REPO_ORIG_VCS 				:= github.com
+REPO_ORIG_OWNER 			:= github
+REPO_ORIG_NAME 				:= hub
+REPO_ORIG_URI 				:= $(REPO_ORIG_VCS)/$(REPO_ORIG_OWNER)/$(REPO_ORIG_NAME)
+REPO_ORIG_BRANCH 			:= master
+
+ifeq ($(REPO_BRANCH), $(REPO_FORK_BRANCH_EXPECTED))
+  REPO_BRANCH_MISMATCH 		:= false
 else
-  REPO_BRANCH_WARNING 		:= true
+  REPO_BRANCH_MISMATCH 		:= true
 endif
 
 # check if $(REPO_BRANCH_FORK) == $(REPO_BRANCH)
@@ -100,7 +106,6 @@ PROGRAMS_LIST := hub hubs
 
 ################################################################################################
 ## hub - help
-
 MIN_COVERAGE = 89.4
 
 HELP_CMD = \
@@ -150,12 +155,17 @@ all: deps test build install version dist ## Trigger targets for generating a ne
 
 info: clear info-runtime info-vcs info-docker info-footer ## Print all Makefile related variables
 
-update-fork-master:
-	@git remote add upstream git://github.com/github/hub.git
-	@git fetch upstream
-	@git checkout -b master
-	@git pull upstream master
-	@git checkout -b $(REPO_BRANCH)
+.PHONY: commit
+commit:
+	@git commit -am "commit changes for..."
+
+.PHONY: update-fork-master
+update-fork-master: commit
+	git remote add upstream git://$(REPO_ORIG_URI).git 2>/dev/null; true
+	git fetch upstream 2>/dev/null; true
+	git checkout $(REPO_ORIG_BRANCH)
+	git pull upstream $(REPO_ORIG_BRANCH)
+	git checkout -b $(REPO_BRANCH)
 
 clear: ## Clear terminal screen 
 	@clear
@@ -188,8 +198,8 @@ info-vcs:  ## Print source-control related variables
 	@echo " - BUILD_UNIX: $(BUILD_UNIX)"
 	@echo " - BUILD_VERSION: $(BUILD_VERSION)"
 	@echo " - BUILD_TIME: $(BUILD_TIME)"
-	@echo " - REPO_BRANCH_WARNING: $(REPO_BRANCH_WARNING)"; \
-	 if [ $(REPO_BRANCH_WARNING) == "true" ]; then \
+	@echo " - REPO_BRANCH_MISMATCH: $(REPO_BRANCH_MISMATCH)"; \
+	 if [ $(REPO_BRANCH_MISMATCH) == "true" ]; then \
 	 	echo " - \$(REPO_BRANCH)=$(REPO_BRANCH) not equal to \$(REPO_BRANCH_FORK)=$(REPO_BRANCH_FORK)"; \
 	 fi
 
