@@ -31,34 +31,35 @@ STATUS=0
 
 trap "exit 1" INT
 
-[ -z "$HUB_COVERAGE" ] || script/coverage prepare
-script/build
-script/build test || STATUS="$?"
-script/ruby-test "$@" || STATUS="$?"
-
-if [ -n "$HUB_COVERAGE" ]; then
-  total_coverage="$(script/coverage generate)"
-  echo "Code coverage: $total_coverage"
-  result="$(bc <<<"${total_coverage%\%} < $min_coverage")"
-  if [ "$result" -eq 1 ]; then
-    echo "Error: coverage dropped below the minimum treshold of ${min_coverage}%!"
-    if [ -n "$CI" ]; then
-      html_result="${HUB_COVERAGE%.out}.html"
-      html_result="${html_result#$PWD/}"
-      printf 'Please run `script/test --coverage` locally and open `%s` to analyze the results.\n' "$html_result"
-    fi
-    STATUS=1
-  fi
-fi
-
-if [ -n "$CI" ]; then
+check_formatting() {
+  [[ "$(go version)" != *" go1.8."* ]] || return 0
   make fmt >/dev/null
   if ! git diff -U1 --exit-code; then
-    STATUS=1
     echo
     echo "Some go code was not formatted properly." >&2
     echo "Run \`make fmt' locally to fix these errors." >&2
+    return 1
   fi
+}
+
+install_test() {
+  touch share/man/man1/hub.1
+  DESTDIR="$PWD/tmp/destdir" prefix=/my/prefix bash < script/install.sh
+  test -x tmp/destdir/my/prefix/bin/hub
+  test -e tmp/destdir/my/prefix/share/man/man1/hub.1
+  test ! -x tmp/destdir/my/prefix/share/man/man1/hub.1
+  rm share/man/man1/hub.1
+}
+
+[ -z "$HUB_COVERAGE" ] || script/coverage prepare
+script/build
+go test ./... || STATUS="$?"
+script/ruby-test "$@" || STATUS="$?"
+[ -z "$HUB_COVERAGE" ] || script/coverage summarize "$min_coverage" || STATUS="$?"
+
+if [ -n "$CI" ]; then
+  check_formatting || STATUS="$?"
+  install_test || STATUS="$?"
 fi
 
 exit "$STATUS"

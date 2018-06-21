@@ -102,10 +102,12 @@ func compare(command *Command, args *Args) {
 				utils.Check(err)
 			} else {
 				projectName := ""
+				projectHost := ""
 				if err == nil {
 					projectName = project.Name
+					projectHost = project.Host
 				}
-				project = github.NewProject(args.RemoveParam(args.ParamsSize()-1), projectName, "")
+				project = github.NewProject(args.RemoveParam(args.ParamsSize()-1), projectName, projectHost)
 				if project.Name == "" {
 					utils.Check(fmt.Errorf("error: missing project name (owner: %q)\n", project.Owner))
 				}
@@ -126,7 +128,7 @@ func compare(command *Command, args *Args) {
 }
 
 func parseCompareRange(r string) string {
-	shaOrTag := fmt.Sprintf("((?:%s:)?\\w[\\w.-]+\\w)", OwnerRe)
+	shaOrTag := fmt.Sprintf("((?:%s:)?\\w(?:[\\w.-]*\\w)?)", OwnerRe)
 	shaOrTagRange := fmt.Sprintf("^%s\\.\\.%s$", shaOrTag, shaOrTag)
 	shaOrTagRangeRegexp := regexp.MustCompile(shaOrTagRange)
 	return shaOrTagRangeRegexp.ReplaceAllString(r, "$1...$2")

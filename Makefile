@@ -147,8 +147,8 @@ update-fork-master: commit
 	git remote add upstream $(REPO_ORIG_REMOTE_URL) 2>/dev/null; true
 	git fetch upstream 2>/dev/null; true
 	git pull upstream $(REPO_ORIG_BRANCH)
-	git merge -Xours origin/$(REPO_ORIG_BRANCH)
 	git checkout $(REPO_BRANCH_CURRENT)
+# git merge -Xours origin/$(REPO_ORIG_BRANCH)
 
 .PHONY: update-local-master
 update-local-master: commit
@@ -439,9 +439,8 @@ endif
 bin/ronn bin/cucumber:
 	@shared/scripts/bootstrap
 
-#fmt:
-#	@go fmt $(filter %.go,$(SOURCES_FMT))
-#	@go fmt $(filter-out %.go,$(SOURCES_FMT))
+fmt:
+	go fmt ./...
 
 man-pages: $(HELP_ALL:=.ronn) $(HELP_ALL) $(HELP_ALL:=.txt)
 
