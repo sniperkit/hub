@@ -7,7 +7,6 @@ set -e
 windows=
 [[ $OS == Windows* ]] && windows=1
 
-<<<<<<< HEAD:shared/scripts/build
 setup_gopath() {
   TMPDIR="${LOCALAPPDATA:-$TMPDIR}"
   TMPDIR=${TMPDIR:-/tmp}
@@ -28,13 +27,10 @@ setup_gopath() {
   }
 }
 
-=======
->>>>>>> 4c6d4dfd7d2294d146ea1870d85129018ec23017:script/build
 find_source_files() {
   find . -maxdepth 2 -name '*.go' '!' -name '*_test.go' "$@"
 }
 
-<<<<<<< HEAD:shared/scripts/build
 find_packages() {
   find_source_files | cut -d/ -f2 | sort -u | grep -v '.go$' | sed 's!^!github.com/sniperkit/hub/pkg/!'
 }
@@ -49,8 +45,7 @@ check_go_version() {
   fi
 }
 
-=======
->>>>>>> 4c6d4dfd7d2294d146ea1870d85129018ec23017:script/build
+
 build_hub() {
   mkdir -p "$(dirname "$1")"
   go build -ldflags "-X github.com/sniperkit/hub/pkg/version.Version=`./script/version`" -o "$1"
