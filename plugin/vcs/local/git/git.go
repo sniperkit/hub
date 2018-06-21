@@ -1,457 +1,374 @@
 package git
 
 import (
-	"bytes"
-	"encoding/xml"
+	"fmt"
 	"io/ioutil"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
-	"time"
+
+	"github.com/sniperkit/hub/pkg/cmd"
 )
 
-// NewGitRepo creates a new instance of GitRepo. The remote and local directories
-// need to be passed in.
-func NewGitRepo(remote, local string) (*GitRepo, error) {
-	ins := depInstalled("git")
-	if !ins {
-		return nil, NewLocalError("git is not installed", nil, "")
-	}
-	ltype, err := DetectVcsFromFS(local)
+var GlobalFlags []string
 
-	// Found a VCS other than Git. Need to report an error.
-	if err == nil && ltype != Git {
-		return nil, ErrWrongVCS
-	}
-
-	r := &GitRepo{}
-	r.setRemote(remote)
-	r.setLocalPath(local)
-	r.RemoteLocation = "origin"
-	r.Logger = Logger
-
-	// Make sure the local Git repo is configured the same as the remote when
-	// A remote value was passed in.
-	if err == nil && r.CheckLocal() {
-		c := exec.Command("git", "config", "--get", "remote.origin.url")
-		c.Dir = local
-		c.Env = envForDir(c.Dir)
-		out, err := c.CombinedOutput()
-		if err != nil {
-			return nil, NewLocalError("Unable to retrieve local repo information", err, string(out))
-		}
-
-		localRemote := strings.TrimSpace(string(out))
-		if remote != "" && localRemote != remote {
-			return nil, ErrWrongRemote
-		}
-
-		// If no remote was passed in but one is configured for the locally
-		// checked out Git repo use that one.
-		if remote == "" && localRemote != "" {
-			r.setRemote(localRemote)
-		}
-	}
-
-	return r, nil
-}
-
-// GitRepo implements the Repo interface for the Git source control.
-type GitRepo struct {
-	base
-	RemoteLocation string
-}
-
-// Vcs retrieves the underlying VCS being implemented.
-func (s GitRepo) Vcs() Type {
-	return Git
-}
-
-// Get is used to perform an initial clone of a repository.
-func (s *GitRepo) Get() error {
-	out, err := s.run("git", "clone", "--recursive", s.Remote(), s.LocalPath())
-
-	// There are some windows cases where Git cannot create the parent directory,
-	// if it does not already exist, to the location it's trying to create the
-	// repo. Catch that error and try to handle it.
-	if err != nil && s.isUnableToCreateDir(err) {
-
-		basePath := filepath.Dir(filepath.FromSlash(s.LocalPath()))
-		if _, err := os.Stat(basePath); os.IsNotExist(err) {
-			err = os.MkdirAll(basePath, 0755)
-			if err != nil {
-				return NewLocalError("Unable to create directory", err, "")
-			}
-
-			out, err = s.run("git", "clone", s.Remote(), s.LocalPath())
-			if err != nil {
-				return NewRemoteError("Unable to get repository", err, string(out))
-			}
-			return err
-		}
-
-	} else if err != nil {
-		return NewRemoteError("Unable to get repository", err, string(out))
-	}
-
-	return nil
-}
-
-// Init initializes a git repository at local location.
-func (s *GitRepo) Init() error {
-	out, err := s.run("git", "init", s.LocalPath())
-
-	// There are some windows cases where Git cannot create the parent directory,
-	// if it does not already exist, to the location it's trying to create the
-	// repo. Catch that error and try to handle it.
-	if err != nil && s.isUnableToCreateDir(err) {
-
-		basePath := filepath.Dir(filepath.FromSlash(s.LocalPath()))
-		if _, err := os.Stat(basePath); os.IsNotExist(err) {
-			err = os.MkdirAll(basePath, 0755)
-			if err != nil {
-				return NewLocalError("Unable to initialize repository", err, "")
-			}
-
-			out, err = s.run("git", "init", s.LocalPath())
-			if err != nil {
-				return NewLocalError("Unable to initialize repository", err, string(out))
-			}
-			return nil
-		}
-
-	} else if err != nil {
-		return NewLocalError("Unable to initialize repository", err, string(out))
-	}
-
-	return nil
-}
-
-// Update performs an Git fetch and pull to an existing checkout.
-func (s *GitRepo) Update() error {
-	// Perform a fetch to make sure everything is up to date.
-	out, err := s.RunFromDir("git", "fetch", "--tags", s.RemoteLocation)
-	if err != nil {
-		return NewRemoteError("Unable to update repository", err, string(out))
-	}
-
-	// When in a detached head state, such as when an individual commit is checked
-	// out do not attempt a pull. It will cause an error.
-	detached, err := isDetachedHead(s.LocalPath())
-	if err != nil {
-		return NewLocalError("Unable to update repository", err, "")
-	}
-
-	if detached {
-		return nil
-	}
-
-	out, err = s.RunFromDir("git", "pull")
-	if err != nil {
-		return NewRemoteError("Unable to update repository", err, string(out))
-	}
-
-	return s.defendAgainstSubmodules()
-}
-
-// UpdateVersion sets the version of a package currently checked out via Git.
-func (s *GitRepo) UpdateVersion(version string) error {
-	out, err := s.RunFromDir("git", "checkout", version)
-	if err != nil {
-		return NewLocalError("Unable to update checked out version", err, string(out))
-	}
-
-	return s.defendAgainstSubmodules()
-}
-
-// defendAgainstSubmodules tries to keep repo state sane in the event of
-// submodules. Or nested submodules. What a great idea, submodules.
-func (s *GitRepo) defendAgainstSubmodules() error {
-	// First, update them to whatever they should be, if there should happen to be any.
-	out, err := s.RunFromDir("git", "submodule", "update", "--init", "--recursive")
-	if err != nil {
-		return NewLocalError("Unexpected error while defensively updating submodules", err, string(out))
-	}
-	// Now, do a special extra-aggressive clean in case changing versions caused
-	// one or more submodules to go away.
-	out, err = s.RunFromDir("git", "clean", "-x", "-d", "-f", "-f")
-	if err != nil {
-		return NewLocalError("Unexpected error while defensively cleaning up after possible derelict submodule directories", err, string(out))
-	}
-	// Then, repeat just in case there are any nested submodules that went away.
-	out, err = s.RunFromDir("git", "submodule", "foreach", "--recursive", "git", "clean", "-x", "-d", "-f", "-f")
-	if err != nil {
-		return NewLocalError("Unexpected error while defensively cleaning up after possible derelict nested submodule directories", err, string(out))
-	}
-
-	return nil
-}
-
-// Version retrieves the current version.
-func (s *GitRepo) Version() (string, error) {
-	out, err := s.RunFromDir("git", "rev-parse", "HEAD")
-	if err != nil {
-		return "", NewLocalError("Unable to retrieve checked out version", err, string(out))
-	}
-
-	return strings.TrimSpace(string(out)), nil
-}
-
-// Current returns the current version-ish. This means:
-// * Branch name if on the tip of the branch
-// * Tag if on a tag
-// * Otherwise a revision id
-func (s *GitRepo) Current() (string, error) {
-	out, err := s.RunFromDir("git", "symbolic-ref", "HEAD")
+func Version() (string, error) {
+	output, err := gitOutput("version")
 	if err == nil {
-		o := bytes.TrimSpace(bytes.TrimPrefix(out, []byte("refs/heads/")))
-		return string(o), nil
+		return output[0], nil
+	} else {
+		return "", fmt.Errorf("error running git version: %s", err)
+	}
+}
+
+var cachedDir string
+
+func Dir() (string, error) {
+	if cachedDir != "" {
+		return cachedDir, nil
 	}
 
-	v, err := s.Version()
+	output, err := gitOutput("rev-parse", "-q", "--git-dir")
 	if err != nil {
+		return "", fmt.Errorf("Not a git repository (or any of the parent directories): .git")
+	}
+
+	var chdir string
+	for i, flag := range GlobalFlags {
+		if flag == "-C" {
+			dir := GlobalFlags[i+1]
+			if filepath.IsAbs(dir) {
+				chdir = dir
+			} else {
+				chdir = filepath.Join(chdir, dir)
+			}
+		}
+	}
+
+	gitDir := output[0]
+
+	if !filepath.IsAbs(gitDir) {
+		if chdir != "" {
+			gitDir = filepath.Join(chdir, gitDir)
+		}
+
+		gitDir, err = filepath.Abs(gitDir)
+		if err != nil {
+			return "", err
+		}
+
+		gitDir = filepath.Clean(gitDir)
+	}
+
+	cachedDir = gitDir
+	return gitDir, nil
+}
+
+func WorkdirName() (string, error) {
+	output, err := gitOutput("rev-parse", "--show-toplevel")
+	if err == nil {
+		if len(output) > 0 {
+			return output[0], nil
+		} else {
+			return "", fmt.Errorf("unable to determine git working directory")
+		}
+	} else {
 		return "", err
 	}
-
-	ts, err := s.TagsFromCommit(v)
-	if err != nil {
-		return "", err
-	}
-
-	if len(ts) > 0 {
-		return ts[0], nil
-	}
-
-	return v, nil
 }
 
-// Date retrieves the date on the latest commit.
-func (s *GitRepo) Date() (time.Time, error) {
-	out, err := s.RunFromDir("git", "log", "-1", "--date=iso", "--pretty=format:%cd")
-	if err != nil {
-		return time.Time{}, NewLocalError("Unable to retrieve revision date", err, string(out))
+func HasFile(segments ...string) bool {
+	// The blessed way to resolve paths within git dir since Git 2.5.0
+	output, err := gitOutput("rev-parse", "-q", "--git-path", filepath.Join(segments...))
+	if err == nil && output[0] != "--git-path" {
+		if _, err := os.Stat(output[0]); err == nil {
+			return true
+		}
 	}
-	t, err := time.Parse(longForm, string(out))
-	if err != nil {
-		return time.Time{}, NewLocalError("Unable to retrieve revision date", err, string(out))
-	}
-	return t, nil
-}
 
-// Branches returns a list of available branches on the RemoteLocation
-func (s *GitRepo) Branches() ([]string, error) {
-	out, err := s.RunFromDir("git", "show-ref")
+	// Fallback for older git versions
+	dir, err := Dir()
 	if err != nil {
-		return []string{}, NewLocalError("Unable to retrieve branches", err, string(out))
+		return false
 	}
-	branches := s.referenceList(string(out), `(?m-s)(?:`+s.RemoteLocation+`)/(\S+)$`)
-	return branches, nil
-}
 
-// Tags returns a list of available tags on the RemoteLocation
-func (s *GitRepo) Tags() ([]string, error) {
-	out, err := s.RunFromDir("git", "show-ref")
-	if err != nil {
-		return []string{}, NewLocalError("Unable to retrieve tags", err, string(out))
-	}
-	tags := s.referenceList(string(out), `(?m-s)(?:tags)/(\S+)$`)
-	return tags, nil
-}
-
-// CheckLocal verifies the local location is a Git repo.
-func (s *GitRepo) CheckLocal() bool {
-	if _, err := os.Stat(s.LocalPath() + "/.git"); err == nil {
+	s := []string{dir}
+	s = append(s, segments...)
+	path := filepath.Join(s...)
+	if _, err := os.Stat(path); err == nil {
 		return true
 	}
 
 	return false
 }
 
-// IsReference returns if a string is a reference. A reference can be a
-// commit id, branch, or tag.
-func (s *GitRepo) IsReference(r string) bool {
-	_, err := s.RunFromDir("git", "rev-parse", "--verify", r)
+func BranchAtRef(paths ...string) (name string, err error) {
+	dir, err := Dir()
+	if err != nil {
+		return
+	}
+
+	segments := []string{dir}
+	segments = append(segments, paths...)
+	path := filepath.Join(segments...)
+	b, err := ioutil.ReadFile(path)
+	if err != nil {
+		return
+	}
+
+	n := string(b)
+	refPrefix := "ref: "
+	if strings.HasPrefix(n, refPrefix) {
+		name = strings.TrimPrefix(n, refPrefix)
+		name = strings.TrimSpace(name)
+	} else {
+		err = fmt.Errorf("No branch info in %s: %s", path, n)
+	}
+
+	return
+}
+
+func Editor() (string, error) {
+	output, err := gitOutput("var", "GIT_EDITOR")
+	if err != nil {
+		return "", fmt.Errorf("Can't load git var: GIT_EDITOR")
+	}
+
+	return os.ExpandEnv(output[0]), nil
+}
+
+func Head() (string, error) {
+	return BranchAtRef("HEAD")
+}
+
+func SymbolicFullName(name string) (string, error) {
+	output, err := gitOutput("rev-parse", "--symbolic-full-name", name)
+	if err != nil {
+		return "", fmt.Errorf("Unknown revision or path not in the working tree: %s", name)
+	}
+
+	return output[0], nil
+}
+
+func Ref(ref string) (string, error) {
+	output, err := gitOutput("rev-parse", "-q", ref)
+	if err != nil {
+		return "", fmt.Errorf("Unknown revision or path not in the working tree: %s", ref)
+	}
+
+	return output[0], nil
+}
+
+func RefList(a, b string) ([]string, error) {
+	ref := fmt.Sprintf("%s...%s", a, b)
+	output, err := gitOutput("rev-list", "--cherry-pick", "--right-only", "--no-merges", ref)
+	if err != nil {
+		return []string{}, fmt.Errorf("Can't load rev-list for %s", ref)
+	}
+
+	return output, nil
+}
+
+func NewRange(a, b string) (*Range, error) {
+	output, err := gitOutput("rev-parse", "-q", a, b)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Range{output[0], output[1]}, nil
+}
+
+type Range struct {
+	A string
+	B string
+}
+
+func (r *Range) IsIdentical() bool {
+	return strings.EqualFold(r.A, r.B)
+}
+
+func (r *Range) IsAncestor() bool {
+	cmd := gitCmd("merge-base", "--is-ancestor", r.A, r.B)
+	return cmd.Success()
+}
+
+func CommentChar(text string) (string, error) {
+	char, err := Config("core.commentchar")
+	if err != nil {
+		return "#", nil
+	} else if char == "auto" {
+		lines := strings.Split(text, "\n")
+		commentCharCandidates := strings.Split("#;@!$%^&|:", "")
+	candidateLoop:
+		for _, candidate := range commentCharCandidates {
+			for _, line := range lines {
+				if strings.HasPrefix(line, candidate) {
+					continue candidateLoop
+				}
+			}
+			return candidate, nil
+		}
+		return "", fmt.Errorf("unable to select a comment character that is not used in the current message")
+	} else {
+		return char, nil
+	}
+}
+
+func Show(sha string) (string, error) {
+	cmd := cmd.New("git")
+	cmd.WithArg("-c").WithArg("log.showSignature=false")
+	cmd.WithArg("show").WithArg("-s").WithArg("--format=%s%n%+b").WithArg(sha)
+
+	output, err := cmd.CombinedOutput()
+	output = strings.TrimSpace(output)
+
+	return output, err
+}
+
+func Log(sha1, sha2 string) (string, error) {
+	execCmd := cmd.New("git")
+	execCmd.WithArg("-c").WithArg("log.showSignature=false").WithArg("log").WithArg("--no-color")
+	execCmd.WithArg("--format=%h (%aN, %ar)%n%w(78,3,3)%s%n%+b")
+	execCmd.WithArg("--cherry")
+	shaRange := fmt.Sprintf("%s...%s", sha1, sha2)
+	execCmd.WithArg(shaRange)
+
+	outputs, err := execCmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("Can't load git log %s..%s", sha1, sha2)
+	}
+
+	return outputs, nil
+}
+
+func Remotes() ([]string, error) {
+	return gitOutput("remote", "-v")
+}
+
+func Config(name string) (string, error) {
+	return gitGetConfig(name)
+}
+
+func ConfigAll(name string) ([]string, error) {
+	mode := "--get-all"
+	if strings.Contains(name, "*") {
+		mode = "--get-regexp"
+	}
+
+	lines, err := gitOutput(gitConfigCommand([]string{mode, name})...)
+	if err != nil {
+		err = fmt.Errorf("Unknown config %s", name)
+	}
+	return lines, err
+}
+
+func GlobalConfig(name string) (string, error) {
+	return gitGetConfig("--global", name)
+}
+
+func SetGlobalConfig(name, value string) error {
+	_, err := gitConfig("--global", name, value)
+	return err
+}
+
+func gitGetConfig(args ...string) (string, error) {
+	output, err := gitOutput(gitConfigCommand(args)...)
+	if err != nil {
+		return "", fmt.Errorf("Unknown config %s", args[len(args)-1])
+	}
+
+	if len(output) == 0 {
+		return "", nil
+	}
+
+	return output[0], nil
+}
+
+func gitConfig(args ...string) ([]string, error) {
+	return gitOutput(gitConfigCommand(args)...)
+}
+
+func gitConfigCommand(args []string) []string {
+	cmd := []string{"config"}
+	return append(cmd, args...)
+}
+
+func Alias(name string) (string, error) {
+	return Config(fmt.Sprintf("alias.%s", name))
+}
+
+func Run(args ...string) error {
+	cmd := gitCmd(args...)
+	return cmd.Run()
+}
+
+func Spawn(args ...string) error {
+	cmd := gitCmd(args...)
+	return cmd.Spawn()
+}
+
+func Quiet(args ...string) bool {
+	cmd := gitCmd(args...)
+	return cmd.Success()
+}
+
+func IsGitDir(dir string) bool {
+	cmd := cmd.New("git")
+	cmd.WithArgs("--git-dir="+dir, "rev-parse", "--git-dir")
+	return cmd.Success()
+}
+
+func LocalBranches() ([]string, error) {
+	lines, err := gitOutput("branch", "--list")
 	if err == nil {
-		return true
-	}
-
-	// Some refs will fail rev-parse. For example, a remote branch that has
-	// not been checked out yet. This next step should pickup the other
-	// possible references.
-	_, err = s.RunFromDir("git", "show-ref", r)
-	return err == nil
-}
-
-// IsDirty returns if the checkout has been modified from the checked
-// out reference.
-func (s *GitRepo) IsDirty() bool {
-	out, err := s.RunFromDir("git", "diff")
-	return err != nil || len(out) != 0
-}
-
-// CommitInfo retrieves metadata about a commit.
-func (s *GitRepo) CommitInfo(id string) (*CommitInfo, error) {
-	fm := `--pretty=format:"<logentry><commit>%H</commit><author>%an &lt;%ae&gt;</author><date>%aD</date><message>%s</message></logentry>"`
-	out, err := s.RunFromDir("git", "log", id, fm, "-1")
-	if err != nil {
-		return nil, ErrRevisionUnavailable
-	}
-
-	cis := struct {
-		Commit  string `xml:"commit"`
-		Author  string `xml:"author"`
-		Date    string `xml:"date"`
-		Message string `xml:"message"`
-	}{}
-	err = xml.Unmarshal(out, &cis)
-	if err != nil {
-		return nil, NewLocalError("Unable to retrieve commit information", err, string(out))
-	}
-
-	t, err := time.Parse("Mon, _2 Jan 2006 15:04:05 -0700", cis.Date)
-	if err != nil {
-		return nil, NewLocalError("Unable to retrieve commit information", err, string(out))
-	}
-
-	ci := &CommitInfo{
-		Commit:  cis.Commit,
-		Author:  cis.Author,
-		Date:    t,
-		Message: cis.Message,
-	}
-
-	return ci, nil
-}
-
-// TagsFromCommit retrieves tags from a commit id.
-func (s *GitRepo) TagsFromCommit(id string) ([]string, error) {
-	// This is imperfect and a better method would be great.
-
-	var re []string
-
-	out, err := s.RunFromDir("git", "show-ref", "-d")
-	if err != nil {
-		return []string{}, NewLocalError("Unable to retrieve tags", err, string(out))
-	}
-
-	lines := strings.Split(string(out), "\n")
-	var list []string
-	for _, i := range lines {
-		if strings.HasPrefix(strings.TrimSpace(i), id) {
-			list = append(list, i)
+		for i, line := range lines {
+			lines[i] = strings.TrimPrefix(line, "* ")
+			lines[i] = strings.TrimPrefix(lines[i], "  ")
 		}
 	}
-	tags := s.referenceList(strings.Join(list, "\n"), `(?m-s)(?:tags)/(\S+)$`)
-	for _, t := range tags {
-		// Dereferenced tags have ^{} appended to them.
-		re = append(re, strings.TrimSuffix(t, "^{}"))
-	}
-
-	return re, nil
+	return lines, err
 }
 
-// Ping returns if remote location is accessible.
-func (s *GitRepo) Ping() bool {
-	c := exec.Command("git", "ls-remote", s.Remote())
+func gitOutput(input ...string) (outputs []string, err error) {
+	cmd := gitCmd(input...)
 
-	// If prompted for a username and password, which GitHub does for all things
-	// not public, it's considered not available. To make it available the
-	// remote needs to be different.
-	c.Env = mergeEnvLists([]string{"GIT_TERMINAL_PROMPT=0"}, os.Environ())
-	_, err := c.CombinedOutput()
-	return err == nil
-}
-
-// EscapePathSeparator escapes the path separator by replacing it with several.
-// Note: this is harmless on Unix, and needed on Windows.
-func EscapePathSeparator(path string) string {
-	switch runtime.GOOS {
-	case `windows`:
-		// On Windows, triple all path separators.
-		// Needed to escape backslash(s) preceding doublequotes,
-		// because of how Windows strings treats backslash+doublequote combo,
-		// and Go seems to be implicitly passing around a doublequoted string on Windows,
-		// so we cannot use default string instead.
-		// See: https://blogs.msdn.microsoft.com/twistylittlepassagesallalike/2011/04/23/everyone-quotes-command-line-arguments-the-wrong-way/
-		// e.g., C:\foo\bar\ -> C:\\\foo\\\bar\\\
-		// used with --prefix, like this: --prefix=C:\foo\bar\ -> --prefix=C:\\\foo\\\bar\\\
-		return strings.Replace(path,
-			string(os.PathSeparator),
-			string(os.PathSeparator)+string(os.PathSeparator)+string(os.PathSeparator),
-			-1)
-	default:
-		return path
-	}
-}
-
-// ExportDir exports the current revision to the passed in directory.
-func (s *GitRepo) ExportDir(dir string) error {
-
-	var path string
-
-	// Without the trailing / there can be problems.
-	if !strings.HasSuffix(dir, string(os.PathSeparator)) {
-		dir = dir + string(os.PathSeparator)
+	out, err := cmd.CombinedOutput()
+	for _, line := range strings.Split(out, "\n") {
+		if strings.TrimSpace(line) != "" {
+			outputs = append(outputs, string(line))
+		}
 	}
 
-	// checkout-index on some systems, such as some Windows cases, does not
-	// create the parent directory to export into if it does not exist. Explicitly
-	// creating it.
-	err := os.MkdirAll(dir, 0755)
+	return outputs, err
+}
+
+func gitCmd(args ...string) *cmd.Cmd {
+	cmd := cmd.New("git")
+
+	for _, v := range GlobalFlags {
+		cmd.WithArg(v)
+	}
+
+	for _, a := range args {
+		cmd.WithArg(a)
+	}
+
+	return cmd
+}
+
+func IsBuiltInGitCommand(command string) bool {
+	helpCommandOutput, err := gitOutput("help", "-a")
 	if err != nil {
-		return NewLocalError("Unable to create directory", err, "")
+		return false
 	}
-
-	path = EscapePathSeparator(dir)
-	out, err := s.RunFromDir("git", "checkout-index", "-f", "-a", "--prefix="+path)
-	s.log(out)
-	if err != nil {
-		return NewLocalError("Unable to export source", err, string(out))
+	for _, helpCommandOutputLine := range helpCommandOutput {
+		if strings.HasPrefix(helpCommandOutputLine, "  ") {
+			for _, gitCommand := range strings.Split(helpCommandOutputLine, " ") {
+				if gitCommand == command {
+					return true
+				}
+			}
+		}
 	}
-
-	// and now, the horror of submodules
-	path = EscapePathSeparator(dir + "$path" + string(os.PathSeparator))
-	out, err = s.RunFromDir("git", "submodule", "foreach", "--recursive", "git checkout-index -f -a --prefix="+path)
-	s.log(out)
-	if err != nil {
-		return NewLocalError("Error while exporting submodule sources", err, string(out))
-	}
-
-	return nil
-}
-
-// isDetachedHead will detect if git repo is in "detached head" state.
-func isDetachedHead(dir string) (bool, error) {
-	p := filepath.Join(dir, ".git", "HEAD")
-	contents, err := ioutil.ReadFile(p)
-	if err != nil {
-		return false, err
-	}
-
-	contents = bytes.TrimSpace(contents)
-	if bytes.HasPrefix(contents, []byte("ref: ")) {
-		return false, nil
-	}
-
-	return true, nil
-}
-
-// isUnableToCreateDir checks for an error in Init() to see if an error
-// where the parent directory of the VCS local path doesn't exist. This is
-// done in a multi-lingual manner.
-func (s *GitRepo) isUnableToCreateDir(err error) bool {
-	msg := err.Error()
-	if strings.HasPrefix(msg, "could not create work tree dir") ||
-		strings.HasPrefix(msg, "不能创建工作区目录") ||
-		strings.HasPrefix(msg, "no s'ha pogut crear el directori d'arbre de treball") ||
-		strings.HasPrefix(msg, "impossible de créer le répertoire de la copie de travail") ||
-		strings.HasPrefix(msg, "kunde inte skapa arbetskatalogen") ||
-		(strings.HasPrefix(msg, "Konnte Arbeitsverzeichnis") && strings.Contains(msg, "nicht erstellen")) ||
-		(strings.HasPrefix(msg, "작업 디렉터리를") && strings.Contains(msg, "만들 수 없습니다")) {
-		return true
-	}
-
 	return false
 }

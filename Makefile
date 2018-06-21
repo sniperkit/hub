@@ -77,7 +77,9 @@ else
   REPO_BRANCH_MISMATCH 		:= true
 endif
 
-# check if $(REPO_BRANCH_FORK) == $(REPO_BRANCH)
+VERSION ?= $(shell git describe --tags)
+VERSION_INCODE = $(shell perl -ne '/^var version.*"([^"]+)".*$$/ && print "v$$1\n"' main.go)
+VERSION_INCHANGELOG = $(shell perl -ne '/^\# Release (\d+(\.\d+)+) / && print "$$1\n"' CHANGELOG.md | head -n1)
 
 #### vcs - commit 
 COMMIT_ID   				?= $(shell git describe --tags --always --dirty=-dev)
@@ -95,7 +97,7 @@ BUILD_TIME 					:= $(shell date)
 
 GO15VENDOREXPERIMENT=1
 BUILD_LDFLAGS = \
-	-X '$(REPO_URI)/pkg/version.Version=$(BUILD_VERSION)' \
+	-X '$(REPO_URI)/pkg/version.Version=$(VERSION)' \
 	-X '$(REPO_URI)/pkg/version.CranchName=$(REPO_BRANCH)' \
 	-X '$(REPO_URI)/pkg/version.CommitHash=$(COMMIT_HASH)' \
 	-X '$(REPO_URI)/pkg/version.CommitID=$(COMMIT_ID)' \
@@ -106,9 +108,6 @@ BUILD_LDFLAGS = \
 
 SOURCES = $(shell shared/scripts/build files)
 SOURCES_FMT = $(shell shared/scripts/build files | cut -d/ -f1-2 | sort -u)
-
-PROG_NAME := hub
-PROGRAMS_LIST := hub hubs
 
 ################################################################################################
 ## makefile
@@ -252,10 +251,10 @@ docker-push: ## Push docker image to image registry
 	@echo "'docker-push' is not implemented yet..."
 
 build: ## Build binary for local operating system 
-	@go build -ldflags "$(BUILD_LDFLAGS)" -o $(BIN_FILE_PATH) *.go
+	@go build -ldflags "$(BUILD_LDFLAGS)" -o $(BIN_FILE_PATH) ./cmd/$(PROG_NAME)/*.go
 
-install: deps ## Install binary in your GOBIN path
-	@go build -ldflags "$(BUILD_LDFLAGS)" -o $(BIN_FILE_PATH) *.go
+install: ## Install binary in your GOBIN path
+	@go install -ldflags "$(BUILD_LDFLAGS)" $(REPO_URI)/cmd/$(PROG_NAME)
 	@$(BIN_BASE_NAME) --version
 
 xbuild: ## Build binaries for linux, darwin in amd64 arch.

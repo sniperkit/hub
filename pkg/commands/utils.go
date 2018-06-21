@@ -10,11 +10,11 @@ import (
 
 	"github.com/atotto/clipboard"
 
-	"github.com/sniperkit/hub/pkg/github"
 	"github.com/sniperkit/hub/pkg/ui"
 	"github.com/sniperkit/hub/pkg/utils"
 
 	"github.com/sniperkit/hub/plugin/vcs/local/git"
+	"github.com/sniperkit/hub/plugin/vcs/provider/github"
 )
 
 type stringSliceValue []string
